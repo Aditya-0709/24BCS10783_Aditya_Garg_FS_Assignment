@@ -1,39 +1,35 @@
 require("dotenv").config();
+
 const express = require("express");
 const mongoose = require("mongoose");
 const app = express();
 const port = process.env.PORT || 3000;
-
 app.use(express.json());
 
-// MongoDB connection
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
     console.log("Connected to MongoDB...");
   })
-  .catch((err) => {
-    console.log("MongoDB connection error:", err.message);
+  .catch((e) => {
+    console.log("MongoDB connection error:", e.message);
   });
 
-function calculateFinalAmount(ticketPrice, discountCode) {
-  if (!discountCode) {
-    return ticketPrice;
+function calc(p, d){
+  if (!d){
+    return p;
+
+  }
+  if (d === "CAMPUS50") {
+    return p * 0.5;
   }
 
-  if (discountCode === "CAMPUS50") {
-    return ticketPrice * 0.5;
+  if (d === "EARLYBIRD") {
+    return Math.max(0, p - 100);
   }
-
-  if (discountCode === "EARLYBIRD") {
-    return Math.max(0, ticketPrice - 100);
-  }
-
   throw new Error("Invalid discount code");
 }
-
-
-const registrationSchema = new mongoose.Schema({
+const sch = new mongoose.Schema({
   studentName: {
     type: String,
     required: [true, "Student name is required"],
@@ -61,7 +57,7 @@ const registrationSchema = new mongoose.Schema({
     trim: true,
     match: [
       /^[A-Z0-9]{8,10}$/,
-      "Roll number must contain 8 to 10 alphanumeric characters",
+      "Roll number must be contain 8 to 10 alphanumeric characters",
     ],
   },
 
@@ -95,17 +91,16 @@ const registrationSchema = new mongoose.Schema({
     required: [true, "Ticket price is required"],
     min: [0, "Ticket price cannot be negative"],
   },
-
   discountCode: {
     type: String,
     trim: true,
     uppercase: true,
     validate: {
-      validator: function (value) {
+      validator: function (v) {
         return (
-          value == null ||
-          value === "" ||
-          ["CAMPUS50", "EARLYBIRD"].includes(value)
+          v == null ||
+          v === "" ||
+          ["CAMPUS50", "EARLYBIRD"].includes(v)
         );
       },
       message: "Invalid discount code",
@@ -126,20 +121,18 @@ const registrationSchema = new mongoose.Schema({
     },
     default: "PENDING",
   },
-
   registrationDate: {
     type: Date,
     default: Date.now,
     validate: {
-      validator: function (value) {
-        return value <= new Date();
+      validator: function (v) {
+        return v <= new Date();
       },
       message: "Registration date cannot be in the future",
     },
   },
 });
-
-registrationSchema.pre("validate", function () {
+sch.pre("validate", function () {
   if (this.eventType === "AI_WORKSHOP" && this.teamSize !== 1) {
     this.invalidate(
       "teamSize",
@@ -147,183 +140,155 @@ registrationSchema.pre("validate", function () {
     );
   }
 });
-
-const Registration = mongoose.model(
-  "Registration",
-  registrationSchema
-);
-
-
-function handleError(err, res) {
-  // Duplicate unique email
-  if (err.code === 11000) {
-    return res.status(409).json({
+const Reg = mongoose.model("Registration",sch);
+function err(e, s) {
+  if (e.code === 11000) {
+    return s.status(409).json({
       success: false,
       message: "This email is already registered for the event",
     });
   }
-  if (err.name === "ValidationError") {
-    const errors = Object.values(err.errors).map(
-      (error) => error.message
-    );
-
-    return res.status(400).json({
+  if (e.name === "ValidationError") {
+    const a = Object.values(e.errors).map((x) => x.message);
+    return s.status(400).json({
       success: false,
       message: "Validation failed",
-      errors,
+      errors: a,
     });
   }
-
-  if (err.name === "CastError") {
-    return res.status(400).json({
+  if (e.name === "CastError") {
+    return s.status(400).json({
       success: false,
       message: "Invalid registration ID format",
     });
   }
 
-  if (err.message === "Invalid discount code") {
-    return res.status(400).json({
+  if (e.message === "Invalid Discount Code") {
+    return s.status(400).json({
       success: false,
       message: "Invalid discount code",
     });
   }
 
-  console.error(err);
+  console.error(e);
 
-  return res.status(500).json({
+  return s.status(500).json({
     success: false,
-    message: "Internal server error",
+    message: "Internal Server Error",
   });
 }
 
-
-function isValidId(id) {
+function chk(id) {
   return mongoose.isValidObjectId(id);
 }
-app.post("/api/registrations", async (req, res) => {
+
+app.post("/api/registrations", async (r, s) => {
   try {
-    const body = { ...req.body };
+    const b = { ...r.body };
 
-    body.finalAmount = calculateFinalAmount(
+    b.finalAmount = calc(b.ticketPrice, b.discountCode);
 
-      body.ticketPrice,
-      body.discountCode
-
-    );
-
-    const registration = await Registration.create(body);
-
-    return res.status(201).json({
+    const reg = await Reg.create(b);
+    return s.status(201).json({
       success: true,
       message: "Registration successful",
-      data: registration,
+      data: reg,
     });
-  } catch (err) {
-    return handleError(err, res);
+  } catch (e) {
+    return err(e, s);
   }
 });
-a
-app.get("/api/registrations", async (req, res) => {
+
+app.get("/api/registrations", async (r, s) => {
   try {
-    const filter = {};
+    const f = {};
 
-    if (req.query.eventType) {
-      filter.eventType = req.query.eventType;
+    if (r.query.eventType) {
+      f.eventType = r.query.eventType;
     }
 
-    if (req.query.status) {
-      filter.status = req.query.status;
+    if (r.query.status) {
+      f.status = r.query.status;
     }
 
-    const registrations = await Registration.find(filter);
-
-    return res.status(200).json({
+    const a = await Reg.find(f);
+    return s.status(200).json({
       success: true,
-      count: registrations.length,
-      data: registrations,
+      count: a.length,
+      data: a,
     });
-  } catch (err) {
-    return handleError(err, res);
+  } catch (e) {
+    return err(e, s);
   }
 });
-
-app.get("/api/registrations/:id", async (req, res) => {
+app.get("/api/registrations/:id", async (r, s) => {
   try {
-    if (!isValidId(req.params.id)) {
-      return res.status(400).json({
+    if (!chk(r.params.id)) {
+      return s.status(400).json({
         success: false,
         message: "Invalid registration ID format",
       });
     }
 
-    const registration = await Registration.findById(req.params.id);
+    const reg = await Reg.findById(r.params.id);
 
-    if (!registration) {
-      return res.status(404).json({
+    if (!reg) {
+      return s.status(404).json({
         success: false,
         message: "Registration not found",
       });
     }
-
-    return res.status(200).json({
+    return s.status(200).json({
       success: true,
-      data: registration,
+      data: reg,
     });
-  } catch (err) {
-    return handleError(err, res);
+  } catch (e) {
+    return err(e, s);
   }
 });
-
-app.put("/api/registrations/:id", async (req, res) => {
+app.put("/api/registrations/:id", async (r, s) => {
   try {
-    if (!isValidId(req.params.id)) {
-      return res.status(400).json({
+    if (!chk(r.params.id)) {
+      return s.status(400).json({
         success: false,
         message: "Invalid registration ID format",
       });
     }
+    const old = await Reg.findById(r.params.id);
 
-    const existing = await Registration.findById(req.params.id);
-
-    if (!existing) {
-      return res.status(404).json({
+    if (!old) {
+      return s.status(404).json({
         success: false,
         message: "Registration not found",
       });
     }
+    const u = { ...r.body };
+    delete u.finalAmount;
+    delete u._id;
+    delete u.__v;
 
-    const updates = { ...req.body };
-    delete updates.finalAmount;
-    delete updates._id;
-    delete updates.__v;
-    const newEventType =
-      updates.eventType ?? existing.eventType;
+    const et = u.eventType ?? old.eventType;
+    const ts = u.teamSize ?? old.teamSize;
 
-    const newTeamSize =
-      updates.teamSize ?? existing.teamSize;
-
-    if (newEventType === "AI_WORKSHOP" && newTeamSize !== 1) {
-      return res.status(400).json({
+    if (et === "AI_WORKSHOP" && ts !== 1) {
+      return s.status(400).json({
         success: false,
         message: "AI Workshop only permits individual registrations",
       });
     }
-    const newTicketPrice =
-      updates.ticketPrice ?? existing.ticketPrice;
 
-    const newDiscountCode =
-      updates.discountCode !== undefined
-        ? updates.discountCode
-        : existing.discountCode;
+    const tp = u.ticketPrice ?? old.ticketPrice;
 
-    updates.finalAmount = calculateFinalAmount(
-      newTicketPrice,
-      newDiscountCode
-    );
+    const dc =
+      u.discountCode !== undefined
+        ? u.discountCode
+        : old.discountCode;
 
-    const registration = await Registration.findByIdAndUpdate(
-      req.params.id,
-      { $set: updates },
+    u.finalAmount = calc(tp, dc);
+
+    const reg = await Reg.findByIdAndUpdate(
+      r.params.id,
+      { $set: u },
       {
         new: true,
         runValidators: true,
@@ -331,60 +296,64 @@ app.put("/api/registrations/:id", async (req, res) => {
       }
     );
 
-    return res.status(200).json({
+    return s.status(200).json({
       success: true,
       message: "Registration updated successfully",
-      data: registration,
+      data: reg,
     });
-  } catch (err) {
-    return handleError(err, res);
+  } catch (e) {
+    return err(e, s);
   }
 });
-app.delete("/api/registrations/:id", async (req, res) => {
+
+app.delete("/api/registrations/:id", async (r, s) => {
   try {
-    if (!isValidId(req.params.id)) {
-      return res.status(400).json({
+    if (!chk(r.params.id)) {
+      return s.status(400).json({
         success: false,
         message: "Invalid registration ID format",
       });
     }
 
-    const registration = await Registration.findByIdAndDelete(
-      req.params.id
-    );
+    const reg = await Reg.findByIdAndDelete(r.params.id);
 
-    if (!registration) {
-      return res.status(404).json({
+    if (!reg) {
+      return s.status(404).json({
         success: false,
         message: "Registration not found",
       });
     }
 
-    return res.status(200).json({
+    return s.status(200).json({
       success: true,
       message: "Registration deleted successfully",
     });
-  } catch (err) {
-    return handleError(err, res);
+  } catch (e) {
+    return err(e, s);
   }
 });
-app.use((err, req, res, next) => {
-  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
-    return res.status(400).json({
+
+app.use((e, r, s, n) => {
+  if (
+    e instanceof SyntaxError &&
+    e.status === 400 &&
+    "body" in e
+  ) {
+    return s.status(400).json({
       success: false,
       message: "Invalid JSON request body",
     });
   }
 
-  next(err);
+  n(e);
+});
+app.get("/api", (r, s) => {
+  s.json({ message: "Hello backend!" });
 });
 
-app.get("/api", (req, res) => {
-  res.json({ message: "Hello backend!" });
-});
-
-mongoose.connection.once("open", () => {
-  app.listen(port, () => {
-    console.log(`Server started on port ${port}`);
+mongoose.connection.once("open",() =>{
+  app.listen(port, () =>{
+    console.log(`Server Started on Port NUmber ${port}`);
   });
+
 });
